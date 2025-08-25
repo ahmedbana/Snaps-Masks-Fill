@@ -58,6 +58,28 @@ class SnapsMaskFillNode:
         
         return Image.fromarray(np_image)
     
+    def tensor_batch_to_pil_list(self, tensor_batch):
+        """Convert batch tensor to list of PIL Images"""
+        pil_images = []
+        
+        # Handle single image case
+        if len(tensor_batch.shape) == 3:
+            tensor_batch = tensor_batch.unsqueeze(0)
+        
+        # Process each image in the batch
+        for i in range(tensor_batch.shape[0]):
+            single_tensor = tensor_batch[i]
+            
+            # Ensure values are in [0, 1] range
+            single_tensor = torch.clamp(single_tensor, 0, 1)
+            
+            # Convert to numpy and scale to [0, 255]
+            np_image = (single_tensor.cpu().numpy() * 255).astype(np.uint8)
+            
+            pil_images.append(Image.fromarray(np_image))
+        
+        return pil_images
+    
     def pil_to_tensor(self, pil_image):
         """Convert PIL Image to tensor"""
         # Convert to RGB if needed
@@ -71,6 +93,27 @@ class SnapsMaskFillNode:
         tensor = torch.from_numpy(np_image).unsqueeze(0)
         
         return tensor
+    
+    def pil_list_to_tensor_batch(self, pil_images):
+        """Convert list of PIL Images to batch tensor"""
+        tensors = []
+        
+        for pil_image in pil_images:
+            # Convert to RGB if needed
+            if pil_image.mode != 'RGB':
+                pil_image = pil_image.convert('RGB')
+            
+            # Convert to numpy array
+            np_image = np.array(pil_image).astype(np.float32) / 255.0
+            
+            # Convert to tensor
+            tensor = torch.from_numpy(np_image)
+            tensors.append(tensor)
+        
+        # Stack tensors to create batch
+        batch_tensor = torch.stack(tensors, dim=0)
+        
+        return batch_tensor
     
     def find_white_box(self, image, threshold=0.9):
         """Find the largest white rectangular area in the image"""
@@ -160,12 +203,8 @@ class SnapsMaskFillNode:
         
         return resized_image
     
-    def process_images(self, base_image, fill_image, white_threshold, fit_mode, margin_size):
-        """Main processing function"""
-        # Convert tensors to PIL Images
-        base_pil = self.tensor_to_pil(base_image)
-        fill_pil = self.tensor_to_pil(fill_image)
-        
+    def process_single_image_pair(self, base_pil, fill_pil, white_threshold, fit_mode, margin_size):
+        """Process a single pair of base and fill images"""
         # Add white margin to the fill image
         fill_with_margin = self.add_white_margin(fill_pil, margin_size)
         
@@ -189,8 +228,37 @@ class SnapsMaskFillNode:
         # Paste the fitted image onto the base image
         result_image.paste(fitted_image, (paste_x, paste_y))
         
-        # Convert back to tensor
-        result_tensor = self.pil_to_tensor(result_image)
+        return result_image
+    
+    def process_images(self, base_image, fill_image, white_threshold, fit_mode, margin_size):
+        """Main processing function - handles both single images and batches"""
+        # Convert tensors to PIL Images
+        base_pil_list = self.tensor_batch_to_pil_list(base_image)
+        fill_pil_list = self.tensor_batch_to_pil_list(fill_image)
+        
+        # Ensure both batches have the same size
+        batch_size = max(len(base_pil_list), len(fill_pil_list))
+        
+        # If one batch is smaller, repeat the last image to match sizes
+        if len(base_pil_list) < batch_size:
+            base_pil_list.extend([base_pil_list[-1]] * (batch_size - len(base_pil_list)))
+        if len(fill_pil_list) < batch_size:
+            fill_pil_list.extend([fill_pil_list[-1]] * (batch_size - len(fill_pil_list)))
+        
+        # Process each image pair
+        result_pil_list = []
+        for i in range(batch_size):
+            result_image = self.process_single_image_pair(
+                base_pil_list[i], 
+                fill_pil_list[i], 
+                white_threshold, 
+                fit_mode, 
+                margin_size
+            )
+            result_pil_list.append(result_image)
+        
+        # Convert back to tensor batch
+        result_tensor = self.pil_list_to_tensor_batch(result_pil_list)
         
         return (result_tensor,)
 
