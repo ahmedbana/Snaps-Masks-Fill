@@ -46,15 +46,17 @@ class SnapsMaskFillNode:
         if len(tensor.shape) == 4:
             tensor = tensor.squeeze(0)
         
-        # Convert from [H, W, C] to [C, H, W] if needed
-        if tensor.shape[-1] == 3 or tensor.shape[-1] == 4:
-            tensor = tensor.permute(2, 0, 1)
+        # Ensure tensor is in [H, W, C] format
+        if len(tensor.shape) == 3:
+            # If tensor is [C, H, W], convert to [H, W, C]
+            if tensor.shape[0] == 3 or tensor.shape[0] == 4:
+                tensor = tensor.permute(1, 2, 0)
         
         # Ensure values are in [0, 1] range
         tensor = torch.clamp(tensor, 0, 1)
         
         # Convert to numpy and scale to [0, 255]
-        np_image = (tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        np_image = (tensor.cpu().numpy() * 255).astype(np.uint8)
         
         return Image.fromarray(np_image)
     
